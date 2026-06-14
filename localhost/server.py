@@ -198,7 +198,7 @@ def fallback_analysis(payload: dict) -> dict:
         "documentSize": payload.get("documentSize") or "Uploaded file",
         "jurisdiction": payload.get("jurisdiction") or "BBMP 2026",
         "provider": "Local fallback",
-        "providerMessage": "Gemini did not return a usable response, so PRUDENCE used local rule checks.",
+        "providerMessage": "OpenAI did not return a usable response, so PRUDENCE used local rule checks.",
         "score": score,
         "coverage": 94,
         "risk": "Low" if score >= 84 else "Medium" if score >= 72 else "High",
@@ -207,7 +207,7 @@ def fallback_analysis(payload: dict) -> dict:
         "extractedItems": [
             "Preview generated from the uploaded file.",
             "Setback, parking, FAR/FSI, and fire-safety checks prepared for review.",
-            "Gemini reading will replace this fallback when the API key and file are accepted.",
+            "OpenAI reading will replace this fallback when the API key and file are accepted.",
         ],
         "plan": {
             "sheetType": "Uploaded Drawing",
@@ -883,7 +883,7 @@ def apply_rule_checks(analysis: dict, payload: dict) -> dict:
     analysis["risk"] = "High" if critical_gaps or counts["Fail"] >= 2 else "Medium" if counts["Missing"] or counts["Review"] else "Low"
     analysis["status"] = "Rule Gaps Found" if counts["Fail"] or counts["Missing"] else "Compliant on Selected Rules"
 
-    text_note = f"Extracted {len(plan_text)} text characters from the uploaded file." if plan_text else "Uploaded file is displayed, but no selectable plan text was found. For scanned plans/images, Gemini OCR is needed for exact current values."
+    text_note = f"Extracted {len(plan_text)} text characters from the uploaded file." if plan_text else "Uploaded file is displayed, but no selectable plan text was found. For scanned plans/images, OpenAI vision is needed for exact current values."
     selected_labels = ", ".join(RULE_PACKS[pack_id]["label"] for pack_id in selected_ids)
     analysis["summary"] = f"Checked selected rule packs: {selected_labels}. {text_note}"
     existing_items = [str(item) for item in analysis.get("extractedItems", [])[:2]]
@@ -934,7 +934,7 @@ def normalize_analysis(parsed: dict, payload: dict, fallback: dict, provider: st
         **fallback,
         **{key: value for key, value in parsed.items() if key in fallback},
         "provider": provider,
-        "providerMessage": parsed.get("providerMessage") or "Gemini read the uploaded document bytes.",
+        "providerMessage": parsed.get("providerMessage") or "OpenAI read the uploaded document bytes.",
         "documentName": parsed.get("documentName") or fallback["documentName"],
         "jurisdiction": parsed.get("jurisdiction") or payload.get("jurisdiction") or fallback["jurisdiction"],
         "summary": parsed.get("summary") or fallback["summary"],
@@ -956,19 +956,19 @@ def normalize_analysis(parsed: dict, payload: dict, fallback: dict, provider: st
     return result
 
 
-def friendly_gemini_error(model: str, code: int, detail: str) -> str:
+def friendly_openai_error(model: str, code: int, detail: str) -> str:
     lowered = detail.lower()
     if code == 429:
-        return f"Gemini quota is exhausted for this API key on {model}. Showing the uploaded file with local fallback checks."
-    if code in {401, 403} or "api key not valid" in lowered or "permission" in lowered:
-        return f"Gemini rejected the configured API key for {model}. Showing the uploaded file with local fallback checks."
+        return f"OpenAI quota is exhausted for this API key on {model}. Showing the uploaded file with local fallback checks."
+    if code in {401, 403} or "api key" in lowered or "permission" in lowered:
+        return f"OpenAI rejected the configured API key for {model}. Showing the uploaded file with local fallback checks."
     if code == 400:
-        return f"Gemini could not process this file with {model}. Showing the uploaded file with local fallback checks."
-    return f"Gemini returned HTTP {code} for {model}. Showing the uploaded file with local fallback checks."
+        return f"OpenAI could not process this file with {model}. Showing the uploaded file with local fallback checks."
+    return f"OpenAI returned HTTP {code} for {model}. Showing the uploaded file with local fallback checks."
 
 
-def gemini_document_analysis(payload: dict) -> dict:
-    api_key = os.environ.get("PRUDENCE_GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+def openai_document_analysis(payload: dict) -> dict:
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("PRUDENCE_OPENAI_API_KEY")
     fallback = fallback_analysis(payload)
     if not api_key:
         return fallback
@@ -980,11 +980,13 @@ def gemini_document_analysis(payload: dict) -> dict:
         return fallback
 
     mime_type = payload.get("mimeType") or payload.get("type") or "application/octet-stream"
-    if str(mime_type).lower().startswith("text/"):
+    if not str(mime_type).lower().startswith("image/"):
+        fallback["provider"] = "Local fallback"
+        fallback["providerMessage"] = "OpenAI is configured; this local demo uses OpenAI vision for image uploads and local rule checks for this file type."
         return fallback
     prompt = (
         "You are PRUDENCE, an Indian construction compliance agent. Analyze the uploaded "
-        "construction drawing, plan image, or PDF visually and textually. Return strict JSON only. "
+        "construction drawing or plan image visually and textually. Return strict JSON only. "
         "Use this schema exactly: {"
         "\"documentName\": string, \"jurisdiction\": string, \"score\": number, "
         "\"coverage\": number, \"risk\": \"Low|Medium|High\", \"status\": string, "
@@ -999,61 +1001,42 @@ def gemini_document_analysis(payload: dict) -> dict:
         f"File metadata: {json.dumps({k: payload.get(k) for k in ['filename', 'size', 'mimeType', 'jurisdiction']})}"
     )
     body = {
-        "contents": [{
+        "model": os.environ.get("PRUDENCE_OPENAI_MODEL") or os.environ.get("OPENAI_MODEL") or "gpt-4o-mini",
+        "messages": [{
             "role": "user",
-            "parts": [
-                {
-                    "inline_data": {
-                        "mime_type": mime_type,
-                        "data": encoded_data,
-                    }
-                },
-                {"text": prompt},
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded_data}"}},
             ],
         }],
-        "generationConfig": {
-            "temperature": 0.15,
-            "maxOutputTokens": 1200,
-            "responseMimeType": "application/json",
-        },
+        "temperature": 0.1,
+        "max_tokens": 1400,
+        "response_format": {"type": "json_object"},
     }
 
-    preferred = os.environ.get("PRUDENCE_GEMINI_MODEL")
-    models = [model for model in [preferred, "gemini-2.0-flash"] if model]
-    seen: set[str] = set()
+    model = body["model"]
     last_error = ""
 
-    for model in models:
-        if model in seen:
-            continue
-        seen.add(model)
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            + urllib.parse.quote(model, safe="-._~")
-            + ":generateContent?key="
-            + urllib.parse.quote(api_key, safe="")
-        )
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=18) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            parsed = strip_json_text(text)
-            return normalize_analysis(parsed, payload, fallback, f"Gemini ({model})")
-        except urllib.error.HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
-            last_error = friendly_gemini_error(model, error.code, detail)
-            if error.code in {400, 404}:
-                continue
-            break
-        except (urllib.error.URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError) as error:
-            last_error = f"Gemini {model}: {error}"
-            continue
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=24) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        text = data["choices"][0]["message"]["content"]
+        parsed = strip_json_text(text)
+        return normalize_analysis(parsed, payload, fallback, f"OpenAI ({model})")
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        last_error = friendly_openai_error(model, error.code, detail)
+    except (urllib.error.URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError) as error:
+        last_error = f"OpenAI {model}: {error}"
 
     fallback["provider"] = "Local fallback"
     fallback["providerMessage"] = last_error or fallback["providerMessage"]
@@ -1134,7 +1117,7 @@ class Handler(SimpleHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
         except json.JSONDecodeError:
             payload = {}
-        result = gemini_document_analysis(payload) if self.path == "/api/analyze-file" else nvidia_analysis(payload)
+        result = openai_document_analysis(payload) if self.path == "/api/analyze-file" else nvidia_analysis(payload)
         result = apply_rule_checks(result, payload)
         encoded = json.dumps(result).encode("utf-8")
         self.send_response(200)
@@ -1150,5 +1133,5 @@ if __name__ == "__main__":
     server = ThreadingHTTPServer(("127.0.0.1", 5173), Handler)
     print("PRUDENCE running at http://127.0.0.1:5173/")
     print("NVIDIA API:", "enabled" if os.environ.get("PRUDENCE_NVIDIA_API_KEY") else "not configured")
-    print("Gemini API:", "enabled" if os.environ.get("PRUDENCE_GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY") else "not configured")
+    print("OpenAI API:", "enabled" if os.environ.get("OPENAI_API_KEY") or os.environ.get("PRUDENCE_OPENAI_API_KEY") else "not configured")
     server.serve_forever()

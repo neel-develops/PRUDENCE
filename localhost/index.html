@@ -1260,7 +1260,7 @@
               <div class="intel-item"><label>Parking</label><span id="intel-parking">18 / 24</span></div>
             </div>
             <div id="document-reading" class="document-reading" hidden>
-              <div id="reading-provider" class="reading-provider">Gemini Reading</div>
+              <div id="reading-provider" class="reading-provider">OpenAI Reading</div>
               <p id="reading-summary"></p>
               <ul id="reading-items"></ul>
             </div>
@@ -1374,11 +1374,11 @@
             status: score >= 84 ? "Review Passed" : "Conditional Approval",
             provider: "Local fallback",
             providerMessage: "Local rule checks are running while cloud document reading is unavailable.",
-            summary: "PRUDENCE loaded the drawing and prepared local compliance checks. Gemini reading will appear here when the API accepts the file.",
+            summary: "PRUDENCE loaded the drawing and prepared local compliance checks. OpenAI reading will appear here when the API accepts the file.",
             extractedItems: [
               "Uploaded file preview is active.",
               "Checking setbacks, parking count, FAR/FSI, coverage, fire access, and road width.",
-              "Values marked pending need a readable plan or Gemini response."
+              "Values marked pending need a readable plan or OpenAI response."
             ],
             plan: {
               sheetType: /\.pdf$/i.test(file.name) ? "PDF Plan Sheet" : file.type.indexOf("image/") === 0 ? "Image Plan" : "CAD Package",
@@ -1411,7 +1411,7 @@
           document.getElementById("intel-setback").textContent = plan.setbackBand || "Pending";
           document.getElementById("intel-parking").textContent = plan.parking || "Pending";
           documentReading.hidden = false;
-          readingProvider.textContent = (analysis.provider || "Gemini Reading") + (analysis.providerMessage ? " - " + analysis.providerMessage : "");
+          readingProvider.textContent = (analysis.provider || "OpenAI Reading") + (analysis.providerMessage ? " - " + analysis.providerMessage : "");
           readingSummary.textContent = analysis.summary || "Document reading complete.";
           readingItems.innerHTML = items.map(function (item) { return "<li>" + escapeHtml(item) + "</li>"; }).join("");
         }
@@ -1569,7 +1569,7 @@
                 data: data
               })
             }).then(function (response) {
-              if (!response.ok) throw new Error("Gemini file analysis failed");
+              if (!response.ok) throw new Error("OpenAI file analysis failed");
               return response.json();
             }).then(function (result) {
               var normalized = normalizeServerAnalysis(result, file);
@@ -1820,7 +1820,7 @@
           viewer.classList.add("has-file");
           viewer.classList.add("show-annotations");
           loadedName.textContent = file.name;
-          loadedMeta.textContent = formatBytes(file.size) + " | Reading uploaded file with Gemini";
+          loadedMeta.textContent = formatBytes(file.size) + " | Reading uploaded file with OpenAI";
           documentTitle.textContent = file.name;
           exportButton.disabled = true;
           setReasoning("analyzing");

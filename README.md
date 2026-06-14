@@ -18,6 +18,13 @@ npm run dev
 Frontend: http://127.0.0.1:5173  
 API: http://127.0.0.1:8000
 
+For optional live vision analysis, create a local `.env` file:
+
+```text
+OPENAI_API_KEY=your_key_here
+PRUDENCE_OPENAI_MODEL=gpt-4o-mini
+```
+
 You can also open the built demo directly after `npm run build`:
 
 ```text
