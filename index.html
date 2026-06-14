@@ -55,7 +55,7 @@
         height: 80px;
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-start;
         gap: 24px;
         padding: 0 48px;
         border-bottom: 1px solid rgba(255,255,255,.1);
@@ -70,6 +70,18 @@
         min-width: 0;
       }
 
+      .brand-logo {
+        width: 46px;
+        height: 46px;
+        flex: 0 0 auto;
+        border: 1px solid rgba(255,255,255,.14);
+        border-radius: 12px;
+        background:
+          linear-gradient(rgba(255,255,255,.04), rgba(255,255,255,.02)),
+          #000 url("/prudence-logo.png") center 37% / 190% auto no-repeat;
+        box-shadow: 0 0 30px rgba(255,255,255,.08);
+      }
+
       .brand h1 {
         margin: 0;
         color: #fff;
@@ -79,7 +91,7 @@
         letter-spacing: -.04em;
       }
 
-      .brand span {
+      .brand .brand-subtitle {
         border-left: 1px solid rgba(255,255,255,.2);
         padding-left: 16px;
         color: rgba(255,255,255,.45);
@@ -93,6 +105,7 @@
       .search {
         position: relative;
         width: min(45vw, 580px);
+        margin-left: auto;
       }
 
       .search input {
@@ -130,39 +143,6 @@
         transform: rotate(45deg);
         background: rgba(255,255,255,.6);
         border-radius: 999px;
-      }
-
-      .header-actions {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        color: rgba(255,255,255,.75);
-      }
-
-      .icon-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 34px;
-        height: 34px;
-        border: 0;
-        color: inherit;
-        background: transparent;
-        cursor: pointer;
-      }
-
-      .avatar {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 40px;
-        height: 40px;
-        border: 1px solid rgba(255,255,255,.2);
-        border-radius: 999px;
-        background: rgba(255,255,255,.1);
-        color: #fff;
-        font-size: 13px;
-        font-weight: 800;
       }
 
       main {
@@ -1154,7 +1134,7 @@
       @media (max-width: 1050px) {
         body { overflow: auto; }
         header { padding: 0 18px; }
-        .search, .brand span { display: none; }
+        .search, .brand .brand-subtitle { display: none; }
         main { height: auto; min-height: 100vh; flex-direction: column; overflow: visible; }
         .viewer { min-height: 600px; }
         .right { width: 100%; border-left: 0; border-top: 1px solid rgba(255,255,255,.08); }
@@ -1166,16 +1146,12 @@
 
     <header>
       <div class="brand">
+        <div class="brand-logo" aria-hidden="true"></div>
         <h1>PRUDENCE</h1>
-        <span>AI Compliance Agent</span>
+        <span class="brand-subtitle">AI Compliance Agent</span>
       </div>
       <div class="search">
         <input placeholder="Search regulations, projects, or clauses..." aria-label="Search">
-      </div>
-      <div class="header-actions">
-        <button class="icon-button" title="Notifications">N</button>
-        <button class="icon-button" title="Settings">S</button>
-        <div class="avatar">PR</div>
       </div>
     </header>
 
