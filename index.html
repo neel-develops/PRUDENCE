@@ -1579,8 +1579,75 @@
           });
         }
 
-        function requestAnalysis(file) {
+        function renderPdfForAnalysis(file) {
+          return file.arrayBuffer()
+            .then(function (buffer) {
+              return import("/pdf.min.mjs").then(function (pdfjs) {
+                pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+                return pdfjs.getDocument({ data: buffer.slice(0) }).promise;
+              });
+            })
+            .then(function (doc) {
+              return doc.getPage(1).then(function (page) {
+                var textPromise = page.getTextContent().then(function (content) {
+                  return content.items.map(function (item) { return item.str || ""; }).join(" ").replace(/\s+/g, " ").trim();
+                }).catch(function () { return ""; });
+                var baseViewport = page.getViewport({ scale: 1 });
+                var scale = Math.max(1, Math.min(2.2, 1700 / Math.max(baseViewport.width, baseViewport.height)));
+                var viewport = page.getViewport({ scale: scale });
+                var canvas = document.createElement("canvas");
+                var context = canvas.getContext("2d", { alpha: false });
+                canvas.width = Math.floor(viewport.width);
+                canvas.height = Math.floor(viewport.height);
+                context.fillStyle = "#fff";
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                return page.render({ canvasContext: context, viewport: viewport }).promise.then(function () {
+                  return textPromise.then(function (text) {
+                    var dataUrl = canvas.toDataURL("image/jpeg", .88);
+                    return {
+                      data: dataUrl.split(",", 2)[1] || "",
+                      mimeType: "image/jpeg",
+                      sourceMimeType: "application/pdf",
+                      extractedText: text,
+                      analysisSource: "pdf-page-render",
+                      renderedPage: 1
+                    };
+                  });
+                });
+              });
+            });
+        }
+
+        function prepareAnalysisPayload(file) {
+          var isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+          if (isPdf) {
+            return renderPdfForAnalysis(file).catch(function () {
+              return fileToBase64(file).then(function (data) {
+                return {
+                  data: data,
+                  mimeType: "application/pdf",
+                  sourceMimeType: "application/pdf",
+                  extractedText: "",
+                  analysisSource: "pdf-raw-fallback",
+                  renderedPage: 0
+                };
+              });
+            });
+          }
           return fileToBase64(file).then(function (data) {
+            return {
+              data: data,
+              mimeType: file.type || "application/octet-stream",
+              sourceMimeType: file.type || "application/octet-stream",
+              extractedText: "",
+              analysisSource: "uploaded-file",
+              renderedPage: 0
+            };
+          });
+        }
+
+        function requestAnalysis(file) {
+          return prepareAnalysisPayload(file).then(function (prepared) {
             var selectedPacks = getSelectedRulePacks();
             var cacheKey = [
               file.name,
@@ -1588,9 +1655,12 @@
               file.type || "",
               jurisdiction.value,
               selectedPacks.join(","),
-              data.length,
-              data.slice(0, 80),
-              data.slice(-80)
+              prepared.mimeType,
+              prepared.analysisSource,
+              prepared.data.length,
+              prepared.data.slice(0, 80),
+              prepared.data.slice(-80),
+              prepared.extractedText.slice(0, 120)
             ].join("|");
             if (state.analysisCache[cacheKey]) {
               return JSON.parse(JSON.stringify(state.analysisCache[cacheKey]));
@@ -1601,10 +1671,15 @@
               body: JSON.stringify({
                 filename: file.name,
                 size: file.size,
-                mimeType: file.type || ( /\.pdf$/i.test(file.name) ? "application/pdf" : "application/octet-stream"),
+                mimeType: prepared.mimeType,
+                sourceMimeType: prepared.sourceMimeType,
+                originalMimeType: file.type || ( /\.pdf$/i.test(file.name) ? "application/pdf" : "application/octet-stream"),
                 jurisdiction: jurisdiction.value,
                 rulePacks: selectedPacks,
-                data: data
+                data: prepared.data,
+                extractedText: prepared.extractedText,
+                analysisSource: prepared.analysisSource,
+                renderedPage: prepared.renderedPage
               })
             }).then(function (response) {
               if (!response.ok) throw new Error("OpenAI file analysis failed");

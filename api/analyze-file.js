@@ -7,24 +7,23 @@ function stripJsonText(text) {
 }
 
 function normalizeOpenAiAnalysis(parsed, fallback, payload) {
-  const allowedRisks = new Set(["Low", "Medium", "High"]);
+  const visualItems = Array.isArray(parsed.extractedItems)
+    ? parsed.extractedItems.filter(Boolean).slice(0, 4).map((item) => `OpenAI visual read: ${item}`)
+    : [];
   const result = {
     ...fallback,
-    provider: "OpenAI vision",
-    providerMessage: "OpenAI analyzed the uploaded drawing bytes; PRUDENCE combined that reading with the selected rule packs.",
+    provider: "OpenAI vision + deterministic rules",
+    providerMessage: "OpenAI read the drawing image; PRUDENCE kept deterministic rule rows and markup coordinates stable for repeat uploads.",
     documentName: parsed.documentName || payload.filename || fallback.documentName,
     jurisdiction: parsed.jurisdiction || payload.jurisdiction || fallback.jurisdiction,
-    summary: parsed.summary || fallback.summary,
-    extractedItems: Array.isArray(parsed.extractedItems) ? parsed.extractedItems : fallback.extractedItems,
+    summary: fallback.summary,
+    extractedItems: [...(Array.isArray(fallback.extractedItems) ? fallback.extractedItems : []), ...visualItems],
     plan: parsed.plan && typeof parsed.plan === "object" ? { ...fallback.plan, ...parsed.plan } : fallback.plan,
-    violations: Array.isArray(parsed.violations) && parsed.violations.length ? parsed.violations : fallback.violations,
+    ruleResults: fallback.ruleResults,
+    ruleSummary: fallback.ruleSummary,
+    annotations: fallback.annotations,
+    violations: fallback.violations,
   };
-  const score = Number(parsed.score);
-  const coverage = Number(parsed.coverage);
-  if (Number.isFinite(score)) result.score = Math.max(0, Math.min(100, Math.round(score)));
-  if (Number.isFinite(coverage)) result.coverage = Math.max(0, Math.min(100, Math.round(coverage)));
-  if (allowedRisks.has(parsed.risk)) result.risk = parsed.risk;
-  if (parsed.status) result.status = parsed.status;
   return result;
 }
 
@@ -61,7 +60,7 @@ async function openAiDocumentAnalysis(payload, fallback) {
         { type: "image_url", image_url: { url: `data:${mimeType};base64,${encodedData}` } },
       ],
     }],
-    temperature: 0.1,
+    temperature: 0,
     max_tokens: 1400,
     response_format: { type: "json_object" },
   };

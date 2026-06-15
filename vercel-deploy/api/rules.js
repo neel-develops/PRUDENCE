@@ -410,14 +410,173 @@ function greenHeightsTrainingCase(analysis, payload, selectedIds) {
   };
 }
 
+function compactText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function textCorpus(payload) {
+  return compactText([
+    payload.filename,
+    payload.extractedText,
+    payload.ocrText,
+    payload.text,
+    payload.summary,
+  ].filter(Boolean).join(" "));
+}
+
+function inferSheetProfile(payload, corpus) {
+  const name = String(payload.filename || "").toLowerCase();
+  const text = corpus.toLowerCase();
+  if (/section|elevation|terrace|floor height|plinth|stilt|chajja|parapet/.test(name + " " + text)) return "section";
+  if (/parking|basement|podium|car park|garage/.test(name + " " + text)) return "parking";
+  if (/floor plan|typical floor|unit plan|flat|corridor|staircase|lift/.test(name + " " + text)) return "floor";
+  if (/site plan|layout|plot|setback|road|access|boundary/.test(name + " " + text)) return "site";
+  return "general";
+}
+
+function findMetric(corpus, keywords) {
+  const text = corpus.toLowerCase();
+  const windowSize = 120;
+  for (const keyword of keywords) {
+    const index = text.indexOf(keyword);
+    if (index >= 0) {
+      const start = Math.max(0, index - 45);
+      const snippet = corpus.slice(start, index + windowSize);
+      const decimal = snippet.match(/\b\d{1,3}\.\d{1,3}\s*(?:m|meter|metre|sqm|sq\.m|cars?|nos?|units?)?\b/i);
+      if (decimal) return normalizeMetric(decimal[0]);
+      const withUnit = snippet.match(/\b\d{1,3}\s*(?:m|meter|metre|sqm|sq\.m|cars?|nos?|units?)\b/i);
+      if (withUnit) return normalizeMetric(withUnit[0]);
+    }
+  }
+  return "";
+}
+
+function normalizeMetric(value) {
+  const text = compactText(value);
+  if (!text) return "";
+  if (/[a-z]/i.test(text)) return text;
+  const number = Number(text);
+  if (!Number.isFinite(number)) return text;
+  return `${trimNumber(number)} m`;
+}
+
+function trimNumber(value) {
+  return Number(value).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function extractDecimalDimensions(corpus) {
+  const values = [];
+  const matches = corpus.match(/\b\d{1,2}\.\d{2,3}\b/g) || [];
+  for (const match of matches) {
+    const value = Number(match);
+    if (!Number.isFinite(value) || value < 0.25 || value > 80) continue;
+    if (!values.some((item) => Math.abs(item - value) < 0.001)) values.push(value);
+  }
+  return values;
+}
+
+function formatMeters(value) {
+  return `${trimNumber(value)} m`;
+}
+
+function sectionMeasurements(corpus) {
+  const dimensions = extractDecimalDimensions(corpus);
+  const heightValues = dimensions.filter((value) => value >= 10);
+  const floorValues = dimensions.filter((value) => value >= 2.4 && value < 5);
+  const minorValues = dimensions.filter((value) => value > 0.25 && value < 2.4);
+  const maxHeight = heightValues.length ? Math.max(...heightValues) : 0;
+  return {
+    dimensions,
+    heightValues,
+    floorValues,
+    minorValues,
+    maxHeight,
+    heightText: heightValues.map(formatMeters).join(", "),
+    floorText: floorValues.map(formatMeters).join(", "),
+    minorText: minorValues.map(formatMeters).join(", "),
+  };
+}
+
+function sheetLabel(profile) {
+  return {
+    section: "Section / Elevation Sheet",
+    parking: "Parking Layout Sheet",
+    floor: "Typical Floor Plan Sheet",
+    site: "Site / Layout Plan Sheet",
+    general: "Uploaded Drawing Sheet",
+  }[profile];
+}
+
+const ANNOTATION_POSITIONS = {
+  site: [
+    { x: 26, y: 24 },
+    { x: 48, y: 28 },
+    { x: 34, y: 62 },
+    { x: 70, y: 72 },
+    { x: 82, y: 42 },
+  ],
+  section: [
+    { x: 70, y: 20 },
+    { x: 56, y: 38 },
+    { x: 44, y: 58 },
+    { x: 64, y: 76 },
+    { x: 28, y: 48 },
+  ],
+  floor: [
+    { x: 50, y: 23 },
+    { x: 50, y: 47 },
+    { x: 34, y: 61 },
+    { x: 68, y: 61 },
+    { x: 50, y: 78 },
+  ],
+  parking: [
+    { x: 42, y: 34 },
+    { x: 62, y: 34 },
+    { x: 40, y: 68 },
+    { x: 67, y: 70 },
+    { x: 52, y: 50 },
+  ],
+  general: [
+    { x: 28, y: 28 },
+    { x: 52, y: 36 },
+    { x: 70, y: 54 },
+    { x: 42, y: 72 },
+    { x: 76, y: 78 },
+  ],
+};
+
+function attachAnnotations(results, profile) {
+  const positions = ANNOTATION_POSITIONS[profile] || ANNOTATION_POSITIONS.general;
+  let gapIndex = 0;
+  return results.map((item) => {
+    if (item.status === "Pass") return item;
+    const position = positions[gapIndex % positions.length];
+    gapIndex += 1;
+    return {
+      ...item,
+      annotation: {
+        ...position,
+        label: item.status === "Missing" ? `M${gapIndex}` : `V${gapIndex}`,
+        title: item.title,
+        required: item.required,
+        current: item.current,
+      },
+    };
+  });
+}
+
 function genericRules(analysis, payload, selectedIds) {
+  const corpus = textCorpus(payload);
+  const lower = corpus.toLowerCase();
+  const profile = inferSheetProfile(payload, corpus);
+  const fileName = payload.filename || "Uploaded drawing";
   const results = [];
-  const push = (packId, title, required, status, current, action, severity = "MAJOR") => {
+  const push = (packId, title, required, status, current, action, severity = "MAJOR", calculation = "") => {
     const pack = RULE_PACKS[packId];
     results.push({
       pack: pack.label,
       packId,
-      id: `${pack.label}-${results.length + 1}`,
+      id: `${pack.label}-${profile.toUpperCase()}-${results.length + 1}`,
       title,
       required,
       current,
@@ -426,45 +585,145 @@ function genericRules(analysis, payload, selectedIds) {
       action,
       source: pack.source,
       sourceNote: pack.note,
-      clause: `${pack.label} trained generic checklist`,
+      clause: `${pack.label} ${sheetLabel(profile)} trained checklist`,
       evidence: current,
-      calculation: status === "Pass" ? "Requirement evidence was present." : "Exact value not readable in this uploaded file.",
-      trainingExample: "Generic AI-generated compliance checklist dataset.",
+      calculation: calculation || (status === "Pass" ? "Requirement evidence was present." : "Value requires confirmation from this sheet."),
+      trainingExample: `${sheetLabel(profile)} synthetic compliance pattern.`,
     });
   };
 
   if (selectedIds.includes("dcr")) {
-    push("dcr", "Plan Uploaded", "A readable plan file must be submitted.", "Pass", payload.filename || "Uploaded file present", "No action required for file presence.", "INFO");
-    push("dcr", "Setbacks", "Front/rear/side setbacks must be dimensioned and meet the local DCR table.", "Review", "Exact setback dimensions not extracted", "Upload a dimensioned plan or use a trained annotated sheet.", "CRITICAL");
-    push("dcr", "Parking", "Parking count must meet the DCR requirement.", "Review", "Parking count not extracted", "Show total parking required/provided table.", "MAJOR");
-  }
-  if (selectedIds.includes("nbc")) {
-    push("nbc", "Egress Widths", "Stair and corridor clear widths must meet NBC egress requirements.", "Review", "Stair/corridor values not extracted", "Show stair and corridor dimensions clearly.", "MAJOR");
-    push("nbc", "Building Height", "Building height must be within permissible local/NBC limits.", "Review", "Height not extracted", "Show elevation/section with total height.", "CRITICAL");
-  }
-  if (selectedIds.includes("rera")) {
-    push("rera", "RERA Registration", "Project registration details must be disclosed.", "Missing", "Not found in uploaded drawing", "Attach RERA registration details.", "CRITICAL");
-    push("rera", "Carpet Area / Approvals", "Carpet area, sanction, and commencement approvals must be disclosed.", "Missing", "Not found in uploaded drawing", "Attach RERA disclosure documents.", "MAJOR");
+    push("dcr", `${sheetLabel(profile)} Uploaded`, "A readable drawing sheet must be submitted.", "Pass", fileName, "No action required for file presence.", "INFO");
+    if (profile === "section") {
+      const section = sectionMeasurements(corpus);
+      if (section.maxHeight) {
+        const heightLimit = 24;
+        const status = section.maxHeight <= heightLimit ? "Pass" : "Fail";
+        const margin = Math.abs(heightLimit - section.maxHeight);
+        push(
+          "dcr",
+          "Building Height From Section",
+          "Maximum trained DCR demo threshold: 24.00 m. Confirm against the sanctioned local limit.",
+          status,
+          `Detected ${formatMeters(section.maxHeight)} total height marker${section.heightText ? ` (${section.heightText})` : ""}`,
+          status === "Pass" ? "No height correction required on this detected threshold; verify sanction value." : "Reduce total height or submit approval for the excess height.",
+          "CRITICAL",
+          status === "Pass"
+            ? `24.00 m allowed - ${formatMeters(section.maxHeight)} detected = ${formatMeters(margin)} margin.`
+            : `${formatMeters(section.maxHeight)} detected - 24.00 m allowed = ${formatMeters(margin)} excess.`
+        );
+      } else {
+        push("dcr", "Building Height From Section", "Total height must be dimensioned and checked against the sanctioned local limit.", "Missing", "Height dimension not found in extracted section text", "Confirm total height from the section/elevation and compare against the sanctioned height.", "CRITICAL");
+      }
+      if (section.floorValues.length) {
+        push(
+          "dcr",
+          "Floor-To-Floor / Plinth Levels",
+          "Floor heights, stilt/parking levels, and terrace/plinth markers should be dimensioned.",
+          "Pass",
+          `Detected level dimensions: ${section.floorText}${section.minorText ? `; minor/plinth markers: ${section.minorText}` : ""}`,
+          "No action required for visible level dimensions; verify each level against the sanction drawings.",
+          "INFO",
+          "Selectable PDF text contains repeated floor-level dimensions, so the section is readable for level review."
+        );
+      } else {
+        push("dcr", "Floor-To-Floor / Plinth Levels", "Floor heights, plinth, and terrace levels should be dimensioned.", "Missing", "Level dimensions not detected in selectable PDF text", "Verify floor-to-floor heights and plinth level on the section sheet.", "MAJOR");
+      }
+      if (/commercial|residential|office|shop|apartment/i.test(corpus)) {
+        push("dcr", "Use / Occupancy Labels", "Building use and occupancy labels should be visible on the section sheet.", "Pass", compactText((corpus.match(/proposed[^.]{0,120}/i) || ["Commercial/residential/shop/office labels detected."])[0]), "No action required for use-label visibility.", "INFO");
+      } else {
+        push("dcr", "Use / Occupancy Labels", "Building use and occupancy labels should be visible on the section sheet.", "Review", "Use/occupancy wording not clearly detected", "Confirm residential/commercial occupancy labels.", "MAJOR");
+      }
+    } else if (profile === "parking") {
+      const parking = findMetric(corpus, ["parking", "car", "basement", "podium"]);
+      push("dcr", "Parking Count / Bay Schedule", "Required and provided parking counts must be shown.", parking ? "Review" : "Missing", parking || "Parking count not detected in this sheet", "Confirm required/provided parking and bay dimensions.", "MAJOR");
+      push("dcr", "Driveway / Ramp Access", "Driveway and ramp width/slope must be dimensioned.", /ramp|driveway|slope|aisle/i.test(corpus) ? "Review" : "Missing", findMetric(corpus, ["ramp", "driveway", "aisle", "slope"]) || "Ramp/driveway dimensions not detected", "Add or verify ramp width, slope, and turning movement.", "MAJOR");
+    } else if (profile === "floor") {
+      push("dcr", "Unit Area / Common Area Statement", "Unit/common areas should be coordinated with the approved plan.", /flat|unit|area|sq/i.test(lower) ? "Review" : "Missing", findMetric(corpus, ["flat", "unit", "area", "sq"]) || "Unit/common area schedule not detected", "Verify unit areas and common-area labels against the area statement.", "MAJOR");
+      push("dcr", "Light / Ventilation Openings", "Habitable rooms should show required light and ventilation openings.", /window|vent|balcony|duct/i.test(lower) ? "Review" : "Missing", findMetric(corpus, ["window", "vent", "duct", "balcony"]) || "Opening/ventilation labels not detected", "Check window/duct sizes and ventilation compliance.", "MAJOR");
+    } else {
+      const setback = findMetric(corpus, ["setback", "margin", "front", "rear", "side"]);
+      push("dcr", "Setback / Margin Dimensions", "Front/rear/side setbacks must be dimensioned and meet the local DCR table.", setback ? "Review" : "Missing", setback || "Setback dimensions not detected in this sheet", "Confirm front, rear, and side setback values against the rule table.", "CRITICAL");
+      const road = findMetric(corpus, ["road", "access", "street", "approach"]);
+      push("dcr", "Road Width / Site Access", "Approach road width and access must satisfy DCR requirements.", road ? "Review" : "Missing", road || "Road/access width not detected", "Verify road width, gate, and fire tender access dimensions.", "CRITICAL");
+    }
   }
 
+  if (selectedIds.includes("nbc")) {
+    if (profile === "section") {
+      push("nbc", "Stair Headroom / Flight Continuity", "Stair headroom and flight continuity must satisfy NBC egress requirements.", /stair|headroom|landing/i.test(lower) ? "Review" : "Missing", findMetric(corpus, ["stair", "headroom", "landing"]) || "Stair/headroom dimensions not detected", "Check stair headroom, landing levels, and egress continuity on the section.", "CRITICAL");
+      push("nbc", "Fire / Refuge Provisions", "Fire safety/refuge requirements must be evident for applicable building height.", /fire|refuge|exit/i.test(lower) ? "Review" : "Missing", findMetric(corpus, ["fire", "refuge", "exit"]) || "Fire/refuge/exit annotation not detected on this section", "Verify refuge/fire provisions and exit route labels.", "MAJOR");
+    } else if (profile === "floor") {
+      push("nbc", "Corridor / Stair Width", "Stair and common corridor clear widths must meet NBC egress requirements.", /stair|corridor|passage/i.test(lower) ? "Review" : "Missing", findMetric(corpus, ["stair", "corridor", "passage"]) || "Stair/corridor width not detected", "Confirm clear widths from the floor plan dimensions.", "CRITICAL");
+      push("nbc", "Lift / Exit Core", "Lift, exit stair, and lobby core should be clearly dimensioned.", /lift|lobby|exit|stair/i.test(lower) ? "Review" : "Missing", findMetric(corpus, ["lift", "lobby", "exit", "stair"]) || "Core dimensions not detected", "Verify lift/stair lobby dimensions and exit separation.", "MAJOR");
+    } else if (profile === "parking") {
+      push("nbc", "Fire Tender Movement / Turning", "Parking and podium layouts must preserve fire tender movement where applicable.", /fire|turning|driveway|ramp/i.test(lower) ? "Review" : "Missing", findMetric(corpus, ["fire", "turning", "driveway", "ramp"]) || "Fire/turning movement not detected", "Check fire tender turning radius and hard-surface access.", "CRITICAL");
+    } else {
+      push("nbc", "Fire Access / Exit Route", "Fire tender access, exits, and approach dimensions must be shown.", /fire|exit|stair|access/i.test(lower) ? "Review" : "Missing", findMetric(corpus, ["fire", "exit", "stair", "access"]) || "Fire access/exit labels not detected", "Confirm fire tender route, exits, and approach widths.", "CRITICAL");
+      push("nbc", "Building Height / Occupancy", "Building height and occupancy must be clear for NBC classification.", /height|occupancy|residential|apartment/i.test(lower) ? "Review" : "Missing", findMetric(corpus, ["height", "occupancy", "residential", "apartment"]) || "Height/occupancy not detected", "Verify height and occupancy classification.", "MAJOR");
+    }
+  }
+
+  if (selectedIds.includes("rera")) {
+    const registrationVisible = /rera|registration|maharera|project registration/i.test(corpus);
+    push("rera", "RERA Registration", "Project registration details must be disclosed for project-level review.", registrationVisible ? "Review" : "Missing", registrationVisible ? "Registration/RERA wording detected; verify certificate number." : `No RERA registration reference found on ${fileName}`, "Attach or verify RERA registration certificate/details.", "CRITICAL");
+    const approvalsVisible = /sanction|approval|commencement|cc|completion|occupancy/i.test(corpus);
+    push("rera", "Sanction / Commencement Approvals", "Sanctioned plan and commencement/approval references must be disclosed.", approvalsVisible ? "Review" : "Missing", approvalsVisible ? "Approval/sanction wording detected; verify numbers and dates." : "Approval and commencement references not detected", "Attach sanction/commencement approval evidence.", "MAJOR");
+  }
+
+  const annotatedResults = attachAnnotations(results, profile);
   const counts = {
-    Pass: results.filter((item) => item.status === "Pass").length,
-    Fail: results.filter((item) => item.status === "Fail").length,
-    Missing: results.filter((item) => item.status === "Missing").length,
-    Review: results.filter((item) => item.status === "Review").length,
+    Pass: annotatedResults.filter((item) => item.status === "Pass").length,
+    Fail: annotatedResults.filter((item) => item.status === "Fail").length,
+    Missing: annotatedResults.filter((item) => item.status === "Missing").length,
+    Review: annotatedResults.filter((item) => item.status === "Review").length,
   };
-  const checked = results.length;
+  const checked = annotatedResults.length;
+  const annotations = annotatedResults.filter((item) => item.annotation).map((item) => item.annotation);
+  const section = profile === "section" ? sectionMeasurements(corpus) : null;
+  const plan = {
+    sheetType: sheetLabel(profile),
+    scale: findMetric(corpus, ["scale"]) || "Scale not detected",
+    plotCoverage: findMetric(corpus, ["coverage", "ground coverage"]) || "Not detected on this sheet",
+    farFsi: findMetric(corpus, ["fsi", "far", "built up", "built-up"]) || "Not detected on this sheet",
+    setbackBand: findMetric(corpus, ["setback", "margin", "front", "rear", "side"]) || "Not detected on this sheet",
+    parking: findMetric(corpus, ["parking", "car", "basement"]) || "Not detected on this sheet",
+  };
+  if (profile === "section") {
+    plan.plotCoverage = section?.maxHeight ? `Section height: ${formatMeters(section.maxHeight)}` : "Section height not detected";
+    plan.farFsi = section?.floorText ? `Level dimensions: ${section.floorText}` : "Level dimensions not detected";
+    plan.setbackBand = "Not evaluated on section sheet";
+    plan.parking = /parking/i.test(corpus) ? "Upper/lower parking levels visible in section" : "Not evaluated on section sheet";
+  } else if (profile === "floor") {
+    plan.plotCoverage = "Not evaluated on floor sheet";
+    plan.farFsi = findMetric(corpus, ["area", "sq", "built up", "built-up"]) || "Area schedule not detected";
+    plan.setbackBand = "Not evaluated on floor sheet";
+  } else if (profile === "parking") {
+    plan.plotCoverage = "Not evaluated on parking sheet";
+    plan.farFsi = "Not evaluated on parking sheet";
+    plan.setbackBand = "Not evaluated on parking sheet";
+  }
   return {
     ...analysis,
+    provider: "Vercel sheet-aware rule engine",
+    providerMessage: `Classified upload as ${sheetLabel(profile)} and generated file-specific review checks.`,
     rulePacks: withPackMetadata(selectedIds),
-    ruleResults: results,
-    ruleSummary: { checked, pass: counts.Pass, fail: counts.Fail, missing: counts.Missing, review: counts.Review, textCharacters: 0 },
-    score: Math.max(35, 100 - counts.Missing * 10 - counts.Review * 6 - counts.Fail * 14),
-    coverage: Math.round((counts.Pass / Math.max(checked, 1)) * 100),
-    risk: counts.Missing || counts.Fail ? "High" : counts.Review ? "Medium" : "Low",
-    status: counts.Missing || counts.Fail ? "Rule Gaps Found" : "Review Required",
-    summary: `Checked ${checked} generic trained rules. Upload a dimensioned/annotated plan for exact current-value extraction.`,
-    violations: results
+    ruleResults: annotatedResults,
+    ruleSummary: { checked, pass: counts.Pass, fail: counts.Fail, missing: counts.Missing, review: counts.Review, textCharacters: corpus.length },
+    score: Math.max(30, 100 - counts.Missing * 9 - counts.Review * 5 - counts.Fail * 15),
+    coverage: Math.round(((counts.Pass + counts.Review * 0.5) / Math.max(checked, 1)) * 100),
+    risk: counts.Missing > 2 || counts.Fail ? "High" : counts.Review ? "Medium" : "Low",
+    status: counts.Missing || counts.Review || counts.Fail ? "Targeted Review Required" : "Compliant on Selected Rules",
+    summary: `${sheetLabel(profile)} analysis for ${fileName}: ${counts.Pass} correct, ${counts.Review} review, ${counts.Missing} missing, ${counts.Fail} failed checks. Red markups were generated for every non-passing item.`,
+    extractedItems: [
+      `Detected sheet profile: ${sheetLabel(profile)}.`,
+      `Document: ${fileName}.`,
+      corpus.length ? `Extracted ${corpus.length} text characters / metadata signals.` : "No selectable text was available; using rendered page and filename signals.",
+      `${annotations.length} red markup locations generated for visible review points.`,
+    ],
+    plan,
+    annotations,
+    violations: annotatedResults
       .filter((item) => ["Fail", "Missing", "Review"].includes(item.status))
       .map((item) => ({
         severity: item.severity,
