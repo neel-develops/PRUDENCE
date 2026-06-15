@@ -290,6 +290,12 @@
         background: rgba(255,255,255,.09);
       }
 
+      #layers-button.is-active {
+        border-color: rgba(255,255,255,.34);
+        background: rgba(255,255,255,.16);
+        color: #fff;
+      }
+
       .solid-button {
         border: 1px solid #fff;
         background: #fff;
@@ -606,7 +612,7 @@
 
       #annotation-layer {
         position: absolute;
-        z-index: 18;
+        z-index: 24;
         left: 0;
         top: 0;
         width: 100%;
@@ -616,12 +622,12 @@
 
       .annotation {
         position: absolute;
-        z-index: 1;
+        z-index: 5;
         display: none !important;
         transform: translate(-50%, -50%);
         flex-direction: column;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
         pointer-events: none;
       }
 
@@ -630,23 +636,54 @@
       .annotation.two { right: 34%; bottom: 29%; }
 
       .pulse-dot {
-        width: 18px;
-        height: 18px;
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
         border-radius: 999px;
-        background: #fff;
-        box-shadow: 0 0 18px rgba(255,255,255,.85);
+        border: 3px solid #fff;
+        background: #ef4444;
+        color: #fff;
+        box-shadow:
+          0 0 0 6px rgba(239,68,68,.24),
+          0 0 24px rgba(239,68,68,.95),
+          0 10px 26px rgba(0,0,0,.55);
         animation: prudence-pulse 2.4s ease-in-out infinite;
       }
 
+      .pulse-dot:before {
+        content: "!";
+        color: #fff;
+        font-size: 15px;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .pulse-dot:after {
+        content: "";
+        position: absolute;
+        inset: -11px;
+        border: 2px solid rgba(239,68,68,.62);
+        border-radius: inherit;
+        animation: prudence-ring 2.4s ease-in-out infinite;
+      }
+
       @keyframes prudence-pulse {
-        0%, 100% { opacity: .55; transform: scale(.9); }
-        50% { opacity: 1; transform: scale(1.08); }
+        0%, 100% { transform: scale(.94); }
+        50% { transform: scale(1.08); }
+      }
+
+      @keyframes prudence-ring {
+        0%, 100% { opacity: .2; transform: scale(.72); }
+        50% { opacity: .9; transform: scale(1.08); }
       }
 
       .callout {
-        border: 1px solid rgba(255,255,255,.28);
+        border: 1px solid rgba(248,113,113,.9);
         border-radius: 10px;
-        background: rgba(20,20,20,.74);
+        background: rgba(20,4,4,.92);
         padding: 8px 10px;
         color: #fff;
         font-size: 12px;
@@ -654,7 +691,10 @@
         backdrop-filter: blur(28px);
         min-width: 140px;
         max-width: 210px;
-        box-shadow: 0 12px 32px rgba(0,0,0,.25);
+        box-shadow:
+          0 0 0 1px rgba(255,255,255,.16),
+          0 0 28px rgba(239,68,68,.42),
+          0 12px 32px rgba(0,0,0,.38);
       }
 
       .callout strong {
@@ -1452,8 +1492,30 @@
           }).join("");
           state.annotations = annotations.length ? true : state.annotations;
           viewer.classList.toggle("show-annotations", state.annotations && annotations.length > 0);
+          updateLayersButton();
           syncAnnotationLayer();
           requestAnimationFrame(syncAnnotationLayer);
+        }
+
+        function updateLayersButton() {
+          var count = annotationLayer.querySelectorAll(".annotation").length;
+          if (!state.file && !count) {
+            layersButton.classList.remove("is-active");
+            layersButton.setAttribute("aria-pressed", "false");
+            layersButton.title = "Upload a drawing to view markups";
+            layersButton.textContent = "Layers";
+            delete layersButton.dataset.count;
+            return;
+          }
+          layersButton.classList.toggle("is-active", state.annotations);
+          layersButton.setAttribute("aria-pressed", state.annotations ? "true" : "false");
+          layersButton.title = state.annotations ? "Hide violation markups" : "Show violation markups";
+          layersButton.textContent = state.annotations ? "Hide Markups" : "Show Markups";
+          if (count) {
+            layersButton.dataset.count = String(count);
+          } else {
+            delete layersButton.dataset.count;
+          }
         }
 
         function getPreviewSurface() {
@@ -1789,6 +1851,7 @@
           state.file = file;
           state.annotations = true;
           annotationLayer.innerHTML = "";
+          updateLayersButton();
           renderPreview(file);
           emptyState.hidden = true;
           preview.hidden = false;
@@ -2081,7 +2144,9 @@
         });
         layersButton.addEventListener("click", function () {
           state.annotations = !state.annotations;
-          viewer.classList.toggle("show-annotations", state.annotations);
+          viewer.classList.toggle("show-annotations", state.annotations && annotationLayer.querySelectorAll(".annotation").length > 0);
+          updateLayersButton();
+          syncAnnotationLayer();
         });
         window.addEventListener("resize", syncAnnotationLayer);
         document.querySelector('.toolstrip button[title="Zoom in"]').addEventListener("click", function () {

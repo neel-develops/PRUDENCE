@@ -6,6 +6,7 @@ PRUDENCE is a live demo app for Indian construction compliance review:
 - FastAPI demo analysis API
 - PDF upload/preview workflow
 - Agent reasoning trace, violation list, and compliance score
+- Codex-style orchestration proof in `src/agents/orchestrator.py`
 
 ## Run locally
 
