@@ -258,6 +258,46 @@
         color: #fff;
       }
 
+      .cad-panel {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border: 1px solid rgba(59,130,246,.22);
+        border-radius: 14px;
+        background: rgba(37,99,235,.075);
+        padding: 10px 12px;
+      }
+
+      .cad-info {
+        min-width: 0;
+      }
+
+      .cad-info .label {
+        color: rgba(191,219,254,.75);
+        font-size: 12px;
+        font-weight: 850;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+      }
+
+      .cad-info .status {
+        margin-top: 3px;
+        overflow: hidden;
+        color: rgba(255,255,255,.78);
+        font-size: 13px;
+        font-weight: 750;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .cad-actions {
+        display: flex;
+        flex: none;
+        align-items: center;
+        gap: 8px;
+      }
+
       .glass-button,
       .solid-button,
       select {
@@ -321,7 +361,8 @@
         background: rgba(255,255,255,.1);
       }
 
-      #file-input { display: none; }
+      #file-input,
+      #cad-input { display: none; }
 
       .empty {
         position: absolute;
@@ -1277,6 +1318,18 @@
           </div>
         </div>
 
+        <div class="cad-panel">
+          <input id="cad-input" type="file" accept=".dwg,.dxf,.ifc,.step,.stp,.zip,.cad,.svg,.txt">
+          <div class="cad-info">
+            <div class="label">Optional CAD Overlay - WIP</div>
+            <div id="cad-status" class="status">No CAD attached - work in progress</div>
+          </div>
+          <div class="cad-actions">
+            <button id="cad-button" class="glass-button" type="button">Attach CAD</button>
+            <button id="cad-clear" class="glass-button" type="button" hidden>Remove</button>
+          </div>
+        </div>
+
         <div id="viewer" class="viewer">
           <input id="file-input" type="file" accept="application/pdf,image/*,.dwg,.dxf">
           <div id="empty-state" class="empty">
@@ -1328,6 +1381,7 @@
               <div class="intel-item"><label>FAR / FSI</label><span id="intel-far">2.85 / 2.50</span></div>
               <div class="intel-item"><label>Setback Band</label><span id="intel-setback">North flagged</span></div>
               <div class="intel-item"><label>Parking</label><span id="intel-parking">18 / 24</span></div>
+              <div class="intel-item"><label>CAD Overlay WIP</label><span id="intel-cad">Not attached</span></div>
             </div>
             <div id="document-reading" class="document-reading" hidden>
               <div id="reading-provider" class="reading-provider">OpenAI Reading</div>
@@ -1379,11 +1433,17 @@
           pdfPage: 1,
           pdfZoom: 1.35,
           renderToken: 0,
+          cadFile: null,
+          cadPayload: null,
           analysisCache: {}
         };
 
         var fileInput = document.getElementById("file-input");
+        var cadInput = document.getElementById("cad-input");
         var uploadButton = document.getElementById("upload-button");
+        var cadButton = document.getElementById("cad-button");
+        var cadClear = document.getElementById("cad-clear");
+        var cadStatus = document.getElementById("cad-status");
         var chooseButton = document.getElementById("choose-button");
         var layersButton = document.getElementById("layers-button");
         var exportButton = document.getElementById("export-button");
@@ -1431,6 +1491,53 @@
           return selected;
         }
 
+        function cadExtension(file) {
+          var match = String(file && file.name || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+          return match ? match[1] : "cad";
+        }
+
+        function isCadFile(file) {
+          return /\.(dwg|dxf|ifc|step|stp|zip|cad|svg|txt)$/i.test(String(file && file.name || ""));
+        }
+
+        function isTextCadFile(file) {
+          return /\.(dxf|ifc|svg|txt|xml|json|csv)$/i.test(String(file && file.name || "")) ||
+            String(file && file.type || "").indexOf("text/") === 0;
+        }
+
+        function prepareCadPayload(file) {
+          if (!file) return Promise.resolve(null);
+          var base = {
+            attached: true,
+            filename: file.name,
+            size: file.size,
+            mimeType: file.type || "application/octet-stream",
+            extension: cadExtension(file),
+            extractedText: "",
+            analysisMode: "binary-cad-reference"
+          };
+          if (!isTextCadFile(file)) return Promise.resolve(base);
+          return file.text().then(function (text) {
+            return Object.assign({}, base, {
+              extractedText: text.replace(/\s+/g, " ").trim().slice(0, 120000),
+              analysisMode: "cad-layer-text-extraction"
+            });
+          }).catch(function () {
+            return base;
+          });
+        }
+
+        function updateCadStatus() {
+          if (!state.cadFile) {
+            cadStatus.textContent = "No CAD attached - work in progress";
+            cadClear.hidden = true;
+            return;
+          }
+          var mode = state.cadPayload && state.cadPayload.extractedText ? "layers readable" : "binary reference";
+          cadStatus.textContent = state.cadFile.name + " | " + formatBytes(state.cadFile.size) + " | " + mode + " | WIP";
+          cadClear.hidden = false;
+        }
+
         function makeAnalysis(file) {
           var sizeSignal = Math.max(1, Math.min(12, Math.round(file.size / 250000)));
           var score = Math.max(64, 88 - sizeSignal);
@@ -1456,7 +1563,8 @@
               plotCoverage: "Pending",
               farFsi: "Pending",
               setbackBand: "Pending",
-              parking: "Pending"
+              parking: "Pending",
+              cadOverlay: state.cadFile ? state.cadFile.name : "Not attached"
             },
             ruleResults: [],
             ruleSummary: { checked: 0, pass: 0, fail: 0, missing: 0, review: 0, textCharacters: 0 },
@@ -1480,6 +1588,7 @@
           document.getElementById("intel-far").textContent = plan.farFsi || "Pending";
           document.getElementById("intel-setback").textContent = plan.setbackBand || "Pending";
           document.getElementById("intel-parking").textContent = plan.parking || "Pending";
+          document.getElementById("intel-cad").textContent = plan.cadOverlay || (state.cadFile ? state.cadFile.name : "Not attached");
           documentReading.hidden = false;
           readingProvider.textContent = (analysis.provider || "OpenAI Reading") + (analysis.providerMessage ? " - " + analysis.providerMessage : "");
           readingSummary.textContent = analysis.summary || "Document reading complete.";
@@ -1703,72 +1812,87 @@
 
         function requestAnalysis(file) {
           return prepareAnalysisPayload(file).then(function (prepared) {
-            var selectedPacks = getSelectedRulePacks();
-            var cacheKey = [
-              file.name,
-              file.size,
-              file.type || "",
-              jurisdiction.value,
-              selectedPacks.join(","),
-              prepared.mimeType,
-              prepared.analysisSource,
-              prepared.data.length,
-              prepared.data.slice(0, 80),
-              prepared.data.slice(-80),
-              prepared.extractedText.slice(0, 120)
-            ].join("|");
-            if (state.analysisCache[cacheKey]) {
-              return JSON.parse(JSON.stringify(state.analysisCache[cacheKey]));
-            }
-            return fetch("/api/analyze-file", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                filename: file.name,
-                size: file.size,
-                mimeType: prepared.mimeType,
-                sourceMimeType: prepared.sourceMimeType,
-                originalMimeType: file.type || ( /\.pdf$/i.test(file.name) ? "application/pdf" : "application/octet-stream"),
-                jurisdiction: jurisdiction.value,
-                rulePacks: selectedPacks,
-                data: prepared.data,
-                extractedText: prepared.extractedText,
-                analysisSource: prepared.analysisSource,
-                renderedPage: prepared.renderedPage
-              })
-            }).then(function (response) {
-              if (!response.ok) throw new Error("OpenAI file analysis failed");
-              return response.json();
-            }).then(function (result) {
-              var normalized = normalizeServerAnalysis(result, file);
-              state.analysisCache[cacheKey] = normalized;
-              return JSON.parse(JSON.stringify(normalized));
-            }).catch(function () {
-              return fetch("/api/analyze", {
+            return prepareCadPayload(state.cadFile).then(function (cadPayload) {
+              state.cadPayload = cadPayload;
+              updateCadStatus();
+              var selectedPacks = getSelectedRulePacks();
+              var cadKey = cadPayload ? [
+                cadPayload.filename,
+                cadPayload.size,
+                cadPayload.extension,
+                cadPayload.analysisMode,
+                (cadPayload.extractedText || "").slice(0, 120),
+                (cadPayload.extractedText || "").length
+              ].join(":") : "no-cad";
+              var cacheKey = [
+                file.name,
+                file.size,
+                file.type || "",
+                jurisdiction.value,
+                selectedPacks.join(","),
+                prepared.mimeType,
+                prepared.analysisSource,
+                prepared.data.length,
+                prepared.data.slice(0, 80),
+                prepared.data.slice(-80),
+                prepared.extractedText.slice(0, 120),
+                cadKey
+              ].join("|");
+              if (state.analysisCache[cacheKey]) {
+                return JSON.parse(JSON.stringify(state.analysisCache[cacheKey]));
+              }
+              return fetch("/api/analyze-file", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   filename: file.name,
                   size: file.size,
-                  type: file.type || "unknown",
+                  mimeType: prepared.mimeType,
+                  sourceMimeType: prepared.sourceMimeType,
+                  originalMimeType: file.type || ( /\.pdf$/i.test(file.name) ? "application/pdf" : "application/octet-stream"),
                   jurisdiction: jurisdiction.value,
-                  rulePacks: selectedPacks
+                  rulePacks: selectedPacks,
+                  data: prepared.data,
+                  extractedText: prepared.extractedText,
+                  analysisSource: prepared.analysisSource,
+                  renderedPage: prepared.renderedPage,
+                  cad: cadPayload
                 })
-              })
-                .then(function (response) {
-                  if (!response.ok) throw new Error("API analysis failed");
-                  return response.json();
+              }).then(function (response) {
+                if (!response.ok) throw new Error("OpenAI file analysis failed");
+                return response.json();
+              }).then(function (result) {
+                var normalized = normalizeServerAnalysis(result, file);
+                state.analysisCache[cacheKey] = normalized;
+                return JSON.parse(JSON.stringify(normalized));
+              }).catch(function () {
+                return fetch("/api/analyze", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    filename: file.name,
+                    size: file.size,
+                    type: file.type || "unknown",
+                    jurisdiction: jurisdiction.value,
+                    rulePacks: selectedPacks,
+                    cad: cadPayload
+                  })
                 })
-                .then(function (result) {
-                  var normalized = normalizeServerAnalysis(result, file);
-                  state.analysisCache[cacheKey] = normalized;
-                  return JSON.parse(JSON.stringify(normalized));
-                })
-                .catch(function () {
-                  var fallback = makeAnalysis(file);
-                  state.analysisCache[cacheKey] = fallback;
-                  return JSON.parse(JSON.stringify(fallback));
-                });
+                  .then(function (response) {
+                    if (!response.ok) throw new Error("API analysis failed");
+                    return response.json();
+                  })
+                  .then(function (result) {
+                    var normalized = normalizeServerAnalysis(result, file);
+                    state.analysisCache[cacheKey] = normalized;
+                    return JSON.parse(JSON.stringify(normalized));
+                  })
+                  .catch(function () {
+                    var fallback = makeAnalysis(file);
+                    state.analysisCache[cacheKey] = fallback;
+                    return JSON.parse(JSON.stringify(fallback));
+                  });
+              });
             });
           }).then(function (response) {
             return response;
@@ -1976,8 +2100,29 @@
           }
         }
 
+        function runCurrentAnalysis() {
+          if (!state.file) return Promise.resolve();
+          exportButton.disabled = true;
+          setReasoning("analyzing");
+          return requestAnalysis(state.file).then(function (analysis) {
+            state.analysis = analysis;
+            renderViolations(state.analysis);
+            renderScore(state.analysis);
+            renderPlanIntelligence(state.file, state.analysis);
+            renderRuleResults(state.analysis);
+            renderAnnotations(state.analysis);
+            loadedMeta.textContent = formatBytes(state.file.size) + " | " + (state.file.type || "CAD/document file") + " | " + (state.analysis.provider || "Analyzed");
+            setReasoning("complete");
+            exportButton.disabled = false;
+          });
+        }
+
         function acceptFile(file) {
           if (!file) return;
+          if (isCadFile(file) && !/\.pdf$/i.test(file.name) && !(file.type && file.type.indexOf("image/") === 0)) {
+            acceptCadFile(file);
+            return;
+          }
           state.file = file;
           state.annotations = true;
           annotationLayer.innerHTML = "";
@@ -1991,18 +2136,20 @@
           loadedName.textContent = file.name;
           loadedMeta.textContent = formatBytes(file.size) + " | Reading uploaded file with OpenAI";
           documentTitle.textContent = file.name;
-          exportButton.disabled = true;
-          setReasoning("analyzing");
-          requestAnalysis(file).then(function (analysis) {
-            state.analysis = analysis;
-            renderViolations(state.analysis);
-            renderScore(state.analysis);
-            renderPlanIntelligence(file, state.analysis);
-            renderRuleResults(state.analysis);
-            renderAnnotations(state.analysis);
-            loadedMeta.textContent = formatBytes(file.size) + " | " + (file.type || "CAD/document file") + " | " + (state.analysis.provider || "Analyzed");
-            setReasoning("complete");
-            exportButton.disabled = false;
+          runCurrentAnalysis();
+        }
+
+        function acceptCadFile(file) {
+          if (!file) return;
+          state.cadFile = file;
+          state.cadPayload = null;
+          cadStatus.textContent = file.name + " | reading CAD signal... | WIP";
+          cadClear.hidden = false;
+          prepareCadPayload(file).then(function (payload) {
+            state.cadPayload = payload;
+            updateCadStatus();
+            state.analysisCache = {};
+            if (state.file) runCurrentAnalysis();
           });
         }
 
@@ -2234,23 +2381,21 @@
         }
 
         uploadButton.addEventListener("click", function () { fileInput.click(); });
+        cadButton.addEventListener("click", function () { cadInput.click(); });
+        cadClear.addEventListener("click", function () {
+          state.cadFile = null;
+          state.cadPayload = null;
+          state.analysisCache = {};
+          updateCadStatus();
+          if (state.file) runCurrentAnalysis();
+        });
         chooseButton.addEventListener("click", function () { fileInput.click(); });
         exportButton.addEventListener("click", exportReport);
         fileInput.addEventListener("change", function (event) { acceptFile(event.target.files[0]); event.target.value = ""; });
+        cadInput.addEventListener("change", function (event) { acceptCadFile(event.target.files[0]); event.target.value = ""; });
         jurisdiction.addEventListener("change", function () {
           if (state.file) {
-            exportButton.disabled = true;
-            setReasoning("analyzing");
-            requestAnalysis(state.file).then(function (analysis) {
-              state.analysis = analysis;
-              renderViolations(state.analysis);
-              renderScore(state.analysis);
-              renderPlanIntelligence(state.file, state.analysis);
-              renderRuleResults(state.analysis);
-              renderAnnotations(state.analysis);
-              setReasoning("complete");
-              exportButton.disabled = false;
-            });
+            runCurrentAnalysis();
           } else {
             document.getElementById("code-value").textContent = jurisdiction.value;
           }
@@ -2258,18 +2403,7 @@
         rulePackInputs.forEach(function (input) {
           input.addEventListener("change", function () {
             if (!state.file) return;
-            exportButton.disabled = true;
-            setReasoning("analyzing");
-            requestAnalysis(state.file).then(function (analysis) {
-              state.analysis = analysis;
-              renderViolations(state.analysis);
-              renderScore(state.analysis);
-              renderPlanIntelligence(state.file, state.analysis);
-              renderRuleResults(state.analysis);
-              renderAnnotations(state.analysis);
-              setReasoning("complete");
-              exportButton.disabled = false;
-            });
+            runCurrentAnalysis();
           });
         });
         layersButton.addEventListener("click", function () {
@@ -2297,7 +2431,12 @@
         viewer.addEventListener("drop", function (event) {
           event.preventDefault();
           viewer.classList.remove("dragging");
-          acceptFile(event.dataTransfer.files[0]);
+          var dropped = event.dataTransfer.files[0];
+          if (isCadFile(dropped) && !/\.pdf$/i.test(dropped.name) && !(dropped.type && dropped.type.indexOf("image/") === 0)) {
+            acceptCadFile(dropped);
+          } else {
+            acceptFile(dropped);
+          }
         });
 
         showReferencePlan();

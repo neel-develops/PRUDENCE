@@ -359,9 +359,10 @@ function greenHeightsTrainingCase(analysis, payload, selectedIds) {
     },
   ];
 
-  const all = [...correct, ...failed, ...(selectedIds.includes("rera") ? reraMissing : [])].filter((item) =>
+  let all = [...correct, ...failed, ...(selectedIds.includes("rera") ? reraMissing : [])].filter((item) =>
     selectedIds.includes(item.packId),
   );
+  all = appendCadChecks(all, payload);
   const counts = {
     Pass: all.filter((item) => item.status === "Pass").length,
     Fail: all.filter((item) => item.status === "Fail").length,
@@ -394,8 +395,9 @@ function greenHeightsTrainingCase(analysis, payload, selectedIds) {
       farFsi: "2,850 sq.m proposed / 3,000 sq.m max",
       setbackBand: "Rear 1.00 m, Front 2.00 m",
       parking: "25 / 42 cars",
+      cadOverlay: cadPlanText(payload),
     },
-    rulePacks: withPackMetadata(selectedIds),
+    rulePacks: withCadPackMetadata(withPackMetadata(selectedIds), payload),
     ruleResults: all,
     ruleSummary: {
       checked,
@@ -631,7 +633,7 @@ function greenHeightsCompositeCase(analysis, payload, selectedIds) {
     },
   ];
 
-  const all = checks.filter((item) => selectedIds.includes(item.packId));
+  const all = appendCadChecks(checks.filter((item) => selectedIds.includes(item.packId)), payload);
   const counts = {
     Pass: all.filter((item) => item.status === "Pass").length,
     Fail: all.filter((item) => item.status === "Fail").length,
@@ -663,8 +665,9 @@ function greenHeightsCompositeCase(analysis, payload, selectedIds) {
       farFsi: "2,850 sq.m proposed / 3,000 sq.m max",
       setbackBand: "Side 2.00 m / 1.00 m, Front 3.00 m",
       parking: "Parking callouts visible; full schedule requires review",
+      cadOverlay: cadPlanText(payload),
     },
-    rulePacks: withPackMetadata(selectedIds),
+    rulePacks: withCadPackMetadata(withPackMetadata(selectedIds), payload),
     ruleResults: all,
     ruleSummary: {
       checked,
@@ -696,13 +699,125 @@ function compactText(value) {
 }
 
 function textCorpus(payload) {
+  const cad = payload && payload.cad && typeof payload.cad === "object" ? payload.cad : null;
   return compactText([
     payload.filename,
     payload.extractedText,
     payload.ocrText,
     payload.text,
     payload.summary,
+    cad && cad.filename,
+    cad && cad.extension,
+    cad && cad.analysisMode,
+    cad && cad.extractedText,
   ].filter(Boolean).join(" "));
+}
+
+function cadPayload(payload) {
+  const cad = payload && payload.cad && typeof payload.cad === "object" && payload.cad.attached ? payload.cad : null;
+  return cad;
+}
+
+function cadPlanText(payload) {
+  const cad = cadPayload(payload);
+  if (!cad) return "Not attached";
+  const mode = cad.extractedText ? "layer text readable" : "binary reference";
+  return `${cad.filename || "CAD file"} (${String(cad.extension || "cad").toUpperCase()}, ${mode}, WIP)`;
+}
+
+function withCadPackMetadata(packs, payload) {
+  const cad = cadPayload(payload);
+  if (!cad) return packs;
+  return [
+    ...packs,
+    {
+      id: "cad",
+      label: "CAD",
+      source: cad.filename || "Attached CAD plan",
+      note: "Optional CAD companion workflow is marked work-in-progress for layer, dimension, and geometry cross-checks.",
+    },
+  ];
+}
+
+function appendCadChecks(results, payload) {
+  const cad = cadPayload(payload);
+  if (!cad) return results;
+  const text = compactText(cad.extractedText || "");
+  const lower = text.toLowerCase();
+  const ext = String(cad.extension || "cad").toUpperCase();
+  const layerSignals = (text.match(/\b(layer|acdb|polyline|lwpolyline|dimension|text|insert|block|ifcwall|ifcspace)\b/gi) || []).length;
+  const dimensionSignals = (text.match(/\b\d+(?:\.\d+)?\s*(?:m|mm|meter|metre)?\b/gi) || []).length;
+  const cadResults = [
+    {
+      pack: "CAD",
+      packId: "cad",
+      id: "CAD-01",
+      title: "CAD Companion Attached - WIP",
+      required: "Optional CAD file can be attached for deeper layer and geometry analysis. This CAD parser is marked work-in-progress.",
+      current: `${cad.filename || "CAD file"} (${ext}, ${cad.analysisMode || "reference"})`,
+      status: "Pass",
+      severity: "INFO",
+      action: "Use as a demo enhancement. For production, add a server-side DWG/DXF parser for exact geometry extraction.",
+      source: cad.filename || "Attached CAD plan",
+      sourceNote: "User-supplied optional CAD companion file.",
+      clause: "PRUDENCE CAD overlay workflow",
+      evidence: cadPlanText(payload),
+      calculation: "CAD attachment detected and linked to the current drawing analysis as a work-in-progress enhancement.",
+      trainingExample: "CAD companion dataset: CAD-OVERLAY-01.",
+    },
+    {
+      pack: "CAD",
+      packId: "cad",
+      id: "CAD-02",
+      title: "Layer / Entity Extraction - WIP",
+      required: "DXF/IFC/SVG/text CAD should expose layer/entity text; binary DWG/ZIP should be treated as a reference package.",
+      current: text ? `${layerSignals} layer/entity signals extracted` : "Binary CAD reference attached; layer text not directly readable in browser.",
+      status: text ? "Pass" : "Review",
+      severity: "MAJOR",
+      action: text ? "Use extracted CAD layer/entity signals for cross-checking." : "For maximum accuracy, attach a DXF/IFC export along with DWG.",
+      source: cad.filename || "Attached CAD plan",
+      sourceNote: "CAD companion layer extraction check.",
+      clause: "PRUDENCE CAD layer extraction",
+      evidence: text ? text.slice(0, 220) : "No browser-readable CAD text available.",
+      calculation: text ? `${layerSignals} CAD layer/entity keywords detected.` : "Binary CAD files need server-side CAD parser or DXF/IFC companion export.",
+      trainingExample: "CAD companion dataset: CAD-LAYER-EXTRACT-02.",
+    },
+    {
+      pack: "CAD",
+      packId: "cad",
+      id: "CAD-03",
+      title: "Dimension Cross-Check - WIP",
+      required: "CAD dimensions should be compared against PDF/image callouts for setbacks, stair/corridor widths, FSI, and height.",
+      current: text ? `${dimensionSignals} numeric CAD dimension signals detected` : "Dimension cross-check queued from CAD reference package.",
+      status: text && dimensionSignals ? "Review" : "Review",
+      severity: "MAJOR",
+      action: "Use CAD geometry/dimension export to confirm every marked violation before final approval.",
+      source: cad.filename || "Attached CAD plan",
+      sourceNote: "CAD companion dimension cross-check.",
+      clause: "PRUDENCE CAD dimension reconciliation",
+      evidence: text ? text.slice(0, 220) : "CAD file is attached but not text-readable.",
+      calculation: text ? `${dimensionSignals} numeric signals available for dimensional reconciliation.` : "Binary CAD reference improves workflow but cannot be fully parsed client-side.",
+      trainingExample: "CAD companion dataset: CAD-DIM-CHECK-03.",
+    },
+    {
+      pack: "CAD",
+      packId: "cad",
+      id: "CAD-04",
+      title: "Scale / Geometry Calibration - WIP",
+      required: "CAD model scale and geometry should align with the submitted PDF/image sheet.",
+      current: text && /units|insunits|scale|ifcunit|millimeter|metre|meter/i.test(text) ? "Scale/unit signals detected" : "Scale/unit confirmation required",
+      status: text && /units|insunits|scale|ifcunit|millimeter|metre|meter/i.test(text) ? "Pass" : "Review",
+      severity: "MAJOR",
+      action: "Confirm CAD units before relying on exact dimension calculations.",
+      source: cad.filename || "Attached CAD plan",
+      sourceNote: "CAD companion calibration check.",
+      clause: "PRUDENCE CAD scale calibration",
+      evidence: text ? text.slice(0, 220) : "Binary CAD reference attached.",
+      calculation: "CAD units/scale must be calibrated before exact automated measurements.",
+      trainingExample: "CAD companion dataset: CAD-SCALE-04.",
+    },
+  ];
+  return [...results, ...cadResults];
 }
 
 function inferSheetProfile(payload, corpus) {
@@ -1121,27 +1236,37 @@ function genericRules(analysis, payload, selectedIds) {
     plan.farFsi = "Not evaluated on parking sheet";
     plan.setbackBand = "Not evaluated on parking sheet";
   }
+  plan.cadOverlay = cadPlanText(payload);
+  const finalResults = appendCadChecks(annotatedResults, payload);
+  const finalCounts = {
+    Pass: finalResults.filter((item) => item.status === "Pass").length,
+    Fail: finalResults.filter((item) => item.status === "Fail").length,
+    Missing: finalResults.filter((item) => item.status === "Missing").length,
+    Review: finalResults.filter((item) => item.status === "Review").length,
+  };
+  const finalChecked = finalResults.length;
   return {
     ...analysis,
     provider: "Vercel sheet-aware rule engine",
     providerMessage: `Classified upload as ${sheetLabel(profile)} and generated file-specific review checks.`,
-    rulePacks: withPackMetadata(selectedIds),
-    ruleResults: annotatedResults,
-    ruleSummary: { checked, pass: counts.Pass, fail: counts.Fail, missing: counts.Missing, review: counts.Review, textCharacters: corpus.length },
-    score: Math.max(30, 100 - counts.Missing * 9 - counts.Review * 5 - counts.Fail * 15),
-    coverage: Math.round(((counts.Pass + counts.Review * 0.5) / Math.max(checked, 1)) * 100),
-    risk: counts.Missing > 2 || counts.Fail ? "High" : counts.Review ? "Medium" : "Low",
-    status: counts.Missing || counts.Review || counts.Fail ? "Targeted Review Required" : "Compliant on Selected Rules",
-    summary: `${sheetLabel(profile)} analysis for ${fileName}: ${counts.Pass} correct, ${counts.Review} review, ${counts.Missing} missing, ${counts.Fail} failed checks. Red markups were generated for every non-passing item.`,
+    rulePacks: withCadPackMetadata(withPackMetadata(selectedIds), payload),
+    ruleResults: finalResults,
+    ruleSummary: { checked: finalChecked, pass: finalCounts.Pass, fail: finalCounts.Fail, missing: finalCounts.Missing, review: finalCounts.Review, textCharacters: corpus.length },
+    score: Math.max(30, 100 - finalCounts.Missing * 9 - finalCounts.Review * 5 - finalCounts.Fail * 15),
+    coverage: Math.round(((finalCounts.Pass + finalCounts.Review * 0.5) / Math.max(finalChecked, 1)) * 100),
+    risk: finalCounts.Missing > 2 || finalCounts.Fail ? "High" : finalCounts.Review ? "Medium" : "Low",
+    status: finalCounts.Missing || finalCounts.Review || finalCounts.Fail ? "Targeted Review Required" : "Compliant on Selected Rules",
+    summary: `${sheetLabel(profile)} analysis for ${fileName}: ${finalCounts.Pass} correct, ${finalCounts.Review} review, ${finalCounts.Missing} missing, ${finalCounts.Fail} failed checks. Red markups were generated for every non-passing item.`,
     extractedItems: [
       `Detected sheet profile: ${sheetLabel(profile)}.`,
       `Document: ${fileName}.`,
       corpus.length ? `Extracted ${corpus.length} text characters / metadata signals.` : "No selectable text was available; using rendered page and filename signals.",
       `${annotations.length} red markup locations generated for visible review points.`,
+      cadPayload(payload) ? `CAD overlay WIP attached: ${cadPlanText(payload)}.` : "CAD overlay WIP not attached.",
     ],
     plan,
     annotations,
-    violations: annotatedResults
+    violations: finalResults
       .filter((item) => ["Fail", "Missing", "Review"].includes(item.status))
       .map((item) => ({
         severity: item.severity,

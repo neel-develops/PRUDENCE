@@ -86,7 +86,7 @@ async function openAiDocumentAnalysis(payload, fallback) {
     "{\"documentName\": string, \"jurisdiction\": string, \"score\": number, \"coverage\": number, \"risk\": \"Low|Medium|High\", \"status\": string, \"summary\": string, \"extractedItems\": string[], \"plan\": {\"sheetType\": string, \"scale\": string, \"plotCoverage\": string, \"farFsi\": string, \"setbackBand\": string, \"parking\": string}, \"violations\": [{\"severity\": \"CRITICAL|MAJOR|MINOR\", \"title\": string, \"required\": string, \"found\": string, \"delta\": string, \"note\": string, \"clause\": string, \"evidence\": string, \"calculation\": string}], \"ruleResults\": [{\"pack\": string, \"title\": string, \"required\": string, \"current\": string, \"status\": \"Pass|Fail|Missing|Review\", \"evidence\": string, \"calculation\": string}]}",
     "If a dimension or value is not legible, say 'Not legible' instead of inventing it.",
     "Focus on setbacks, FAR/FSI, coverage, parking count, road width, fire access, stairs, corridors, refuge areas, and RERA disclosure gaps.",
-    `File metadata: ${JSON.stringify({ filename: payload.filename, size: payload.size, mimeType, jurisdiction: payload.jurisdiction })}`,
+    `File metadata: ${JSON.stringify({ filename: payload.filename, size: payload.size, mimeType, jurisdiction: payload.jurisdiction, cad: payload.cad ? { filename: payload.cad.filename, size: payload.cad.size, extension: payload.cad.extension, analysisMode: payload.cad.analysisMode, textCharacters: String(payload.cad.extractedText || "").length } : null })}`,
   ].join(" ");
 
   const body = {
