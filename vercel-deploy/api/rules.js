@@ -720,7 +720,7 @@ function cadPayload(payload) {
 
 function cadPlanText(payload) {
   const cad = cadPayload(payload);
-  if (!cad) return "Not attached";
+  if (!cad) return "CAD work in progress";
   const mode = cad.extractedText ? "layer text readable" : "binary reference";
   return `${cad.filename || "CAD file"} (${String(cad.extension || "cad").toUpperCase()}, ${mode}, WIP)`;
 }

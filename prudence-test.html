@@ -259,14 +259,14 @@
       }
 
       .cad-panel {
-        display: flex;
+        display: grid;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        border: 1px solid rgba(59,130,246,.22);
+        gap: 6px;
+        border: 1px solid rgba(59,130,246,.34);
         border-radius: 14px;
-        background: rgba(37,99,235,.075);
-        padding: 10px 12px;
+        background: linear-gradient(135deg, rgba(37,99,235,.16), rgba(168,85,247,.12));
+        padding: 16px;
+        text-align: center;
       }
 
       .cad-info {
@@ -274,28 +274,21 @@
       }
 
       .cad-info .label {
-        color: rgba(191,219,254,.75);
-        font-size: 12px;
-        font-weight: 850;
-        letter-spacing: .14em;
+        color: #fff;
+        font-size: 26px;
+        font-weight: 950;
+        letter-spacing: .08em;
         text-transform: uppercase;
       }
 
       .cad-info .status {
         margin-top: 3px;
         overflow: hidden;
-        color: rgba(255,255,255,.78);
-        font-size: 13px;
-        font-weight: 750;
+        color: rgba(219,234,254,.82);
+        font-size: 14px;
+        font-weight: 800;
         text-overflow: ellipsis;
         white-space: nowrap;
-      }
-
-      .cad-actions {
-        display: flex;
-        flex: none;
-        align-items: center;
-        gap: 8px;
       }
 
       .glass-button,
@@ -361,8 +354,7 @@
         background: rgba(255,255,255,.1);
       }
 
-      #file-input,
-      #cad-input { display: none; }
+      #file-input { display: none; }
 
       .empty {
         position: absolute;
@@ -1319,24 +1311,19 @@
         </div>
 
         <div class="cad-panel">
-          <input id="cad-input" type="file" accept=".dwg,.dxf,.ifc,.step,.stp,.zip,.cad,.svg,.txt">
           <div class="cad-info">
-            <div class="label">Optional CAD Overlay - WIP</div>
-            <div id="cad-status" class="status">No CAD attached - work in progress</div>
-          </div>
-          <div class="cad-actions">
-            <button id="cad-button" class="glass-button" type="button">Attach CAD</button>
-            <button id="cad-clear" class="glass-button" type="button" hidden>Remove</button>
+            <div class="label">CAD WORK IN PROGRESS</div>
+            <div id="cad-status" class="status">Layer parsing, DWG/DXF geometry checks, and CAD overlays are coming soon.</div>
           </div>
         </div>
 
         <div id="viewer" class="viewer">
-          <input id="file-input" type="file" accept="application/pdf,image/*,.dwg,.dxf">
+          <input id="file-input" type="file" accept="application/pdf,image/*">
           <div id="empty-state" class="empty">
             <div class="empty-inner">
               <div class="upload-mark">UP</div>
               <h3>Upload a construction drawing</h3>
-              <p>Select a PDF, image, DWG, or DXF package. PRUDENCE will preview the file, mark likely compliance issues, and generate a local report for testing.</p>
+              <p>Select a PDF or image plan. PRUDENCE will preview the file, mark likely compliance issues, and generate a local report for testing.</p>
               <button id="choose-button" class="solid-button" type="button" style="margin-top: 14px;">Choose File</button>
             </div>
           </div>
@@ -1381,7 +1368,7 @@
               <div class="intel-item"><label>FAR / FSI</label><span id="intel-far">2.85 / 2.50</span></div>
               <div class="intel-item"><label>Setback Band</label><span id="intel-setback">North flagged</span></div>
               <div class="intel-item"><label>Parking</label><span id="intel-parking">18 / 24</span></div>
-              <div class="intel-item"><label>CAD Overlay WIP</label><span id="intel-cad">Not attached</span></div>
+              <div class="intel-item"><label>CAD WIP</label><span id="intel-cad">Work in progress</span></div>
             </div>
             <div id="document-reading" class="document-reading" hidden>
               <div id="reading-provider" class="reading-provider">OpenAI Reading</div>
@@ -1439,10 +1426,7 @@
         };
 
         var fileInput = document.getElementById("file-input");
-        var cadInput = document.getElementById("cad-input");
         var uploadButton = document.getElementById("upload-button");
-        var cadButton = document.getElementById("cad-button");
-        var cadClear = document.getElementById("cad-clear");
         var cadStatus = document.getElementById("cad-status");
         var chooseButton = document.getElementById("choose-button");
         var layersButton = document.getElementById("layers-button");
@@ -1528,14 +1512,7 @@
         }
 
         function updateCadStatus() {
-          if (!state.cadFile) {
-            cadStatus.textContent = "No CAD attached - work in progress";
-            cadClear.hidden = true;
-            return;
-          }
-          var mode = state.cadPayload && state.cadPayload.extractedText ? "layers readable" : "binary reference";
-          cadStatus.textContent = state.cadFile.name + " | " + formatBytes(state.cadFile.size) + " | " + mode + " | WIP";
-          cadClear.hidden = false;
+          cadStatus.textContent = "Layer parsing, DWG/DXF geometry checks, and CAD overlays are coming soon.";
         }
 
         function makeAnalysis(file) {
@@ -1564,7 +1541,7 @@
               farFsi: "Pending",
               setbackBand: "Pending",
               parking: "Pending",
-              cadOverlay: state.cadFile ? state.cadFile.name : "Not attached"
+              cadOverlay: "Work in progress"
             },
             ruleResults: [],
             ruleSummary: { checked: 0, pass: 0, fail: 0, missing: 0, review: 0, textCharacters: 0 },
@@ -1588,7 +1565,7 @@
           document.getElementById("intel-far").textContent = plan.farFsi || "Pending";
           document.getElementById("intel-setback").textContent = plan.setbackBand || "Pending";
           document.getElementById("intel-parking").textContent = plan.parking || "Pending";
-          document.getElementById("intel-cad").textContent = plan.cadOverlay || (state.cadFile ? state.cadFile.name : "Not attached");
+          document.getElementById("intel-cad").textContent = plan.cadOverlay || "Work in progress";
           documentReading.hidden = false;
           readingProvider.textContent = (analysis.provider || "OpenAI Reading") + (analysis.providerMessage ? " - " + analysis.providerMessage : "");
           readingSummary.textContent = analysis.summary || "Document reading complete.";
@@ -2120,7 +2097,7 @@
         function acceptFile(file) {
           if (!file) return;
           if (isCadFile(file) && !/\.pdf$/i.test(file.name) && !(file.type && file.type.indexOf("image/") === 0)) {
-            acceptCadFile(file);
+            updateCadStatus();
             return;
           }
           state.file = file;
@@ -2137,20 +2114,6 @@
           loadedMeta.textContent = formatBytes(file.size) + " | Reading uploaded file with OpenAI";
           documentTitle.textContent = file.name;
           runCurrentAnalysis();
-        }
-
-        function acceptCadFile(file) {
-          if (!file) return;
-          state.cadFile = file;
-          state.cadPayload = null;
-          cadStatus.textContent = file.name + " | reading CAD signal... | WIP";
-          cadClear.hidden = false;
-          prepareCadPayload(file).then(function (payload) {
-            state.cadPayload = payload;
-            updateCadStatus();
-            state.analysisCache = {};
-            if (state.file) runCurrentAnalysis();
-          });
         }
 
         function loadJsPdf() {
@@ -2381,18 +2344,9 @@
         }
 
         uploadButton.addEventListener("click", function () { fileInput.click(); });
-        cadButton.addEventListener("click", function () { cadInput.click(); });
-        cadClear.addEventListener("click", function () {
-          state.cadFile = null;
-          state.cadPayload = null;
-          state.analysisCache = {};
-          updateCadStatus();
-          if (state.file) runCurrentAnalysis();
-        });
         chooseButton.addEventListener("click", function () { fileInput.click(); });
         exportButton.addEventListener("click", exportReport);
         fileInput.addEventListener("change", function (event) { acceptFile(event.target.files[0]); event.target.value = ""; });
-        cadInput.addEventListener("change", function (event) { acceptCadFile(event.target.files[0]); event.target.value = ""; });
         jurisdiction.addEventListener("change", function () {
           if (state.file) {
             runCurrentAnalysis();
@@ -2431,12 +2385,7 @@
         viewer.addEventListener("drop", function (event) {
           event.preventDefault();
           viewer.classList.remove("dragging");
-          var dropped = event.dataTransfer.files[0];
-          if (isCadFile(dropped) && !/\.pdf$/i.test(dropped.name) && !(dropped.type && dropped.type.indexOf("image/") === 0)) {
-            acceptCadFile(dropped);
-          } else {
-            acceptFile(dropped);
-          }
+          acceptFile(event.dataTransfer.files[0]);
         });
 
         showReferencePlan();
