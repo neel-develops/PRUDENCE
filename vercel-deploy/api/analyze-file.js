@@ -6,23 +6,60 @@ function stripJsonText(text) {
   return JSON.parse(match ? match[0] : trimmed);
 }
 
+function compactText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function openAiVisualCorpus(parsed) {
+  const parts = [
+    parsed?.documentName,
+    parsed?.jurisdiction,
+    parsed?.summary,
+    ...(Array.isArray(parsed?.extractedItems) ? parsed.extractedItems : []),
+    ...Object.values(parsed?.plan || {}),
+  ];
+  for (const collectionName of ["ruleResults", "violations", "annotations"]) {
+    const collection = Array.isArray(parsed?.[collectionName]) ? parsed[collectionName] : [];
+    for (const item of collection) {
+      if (!item || typeof item !== "object") continue;
+      parts.push(...Object.values(item).filter((value) => typeof value === "string" || typeof value === "number"));
+    }
+  }
+  return compactText(parts.filter(Boolean).join(" "));
+}
+
+function visualRuleBase(parsed, fallback, payload) {
+  const corpus = openAiVisualCorpus(parsed);
+  if (!corpus || corpus.length < 20) return fallback;
+  const visual = analyzePayload({
+    ...payload,
+    ocrText: corpus,
+    summary: compactText([payload.summary, parsed.summary].filter(Boolean).join(" ")),
+  });
+  const visualChecked = Number(visual?.ruleSummary?.checked || 0);
+  const fallbackChecked = Number(fallback?.ruleSummary?.checked || 0);
+  if (visual.provider !== fallback.provider || visualChecked >= fallbackChecked) return visual;
+  return fallback;
+}
+
 function normalizeOpenAiAnalysis(parsed, fallback, payload) {
+  const ruleBase = visualRuleBase(parsed, fallback, payload);
   const visualItems = Array.isArray(parsed.extractedItems)
     ? parsed.extractedItems.filter(Boolean).slice(0, 4).map((item) => `OpenAI visual read: ${item}`)
     : [];
   const result = {
-    ...fallback,
+    ...ruleBase,
     provider: "OpenAI vision + deterministic rules",
-    providerMessage: "OpenAI read the drawing image; PRUDENCE kept deterministic rule rows and markup coordinates stable for repeat uploads.",
-    documentName: parsed.documentName || payload.filename || fallback.documentName,
-    jurisdiction: parsed.jurisdiction || payload.jurisdiction || fallback.jurisdiction,
-    summary: fallback.summary,
-    extractedItems: [...(Array.isArray(fallback.extractedItems) ? fallback.extractedItems : []), ...visualItems],
-    plan: parsed.plan && typeof parsed.plan === "object" ? { ...fallback.plan, ...parsed.plan } : fallback.plan,
-    ruleResults: fallback.ruleResults,
-    ruleSummary: fallback.ruleSummary,
-    annotations: fallback.annotations,
-    violations: fallback.violations,
+    providerMessage: "OpenAI read the scanned PDF/image; PRUDENCE converted that visual read into deterministic rule rows and compact markup pins.",
+    documentName: parsed.documentName || payload.filename || ruleBase.documentName,
+    jurisdiction: parsed.jurisdiction || payload.jurisdiction || ruleBase.jurisdiction,
+    summary: ruleBase.summary,
+    extractedItems: [...(Array.isArray(ruleBase.extractedItems) ? ruleBase.extractedItems : []), ...visualItems],
+    plan: parsed.plan && typeof parsed.plan === "object" ? { ...ruleBase.plan, ...parsed.plan } : ruleBase.plan,
+    ruleResults: ruleBase.ruleResults,
+    ruleSummary: ruleBase.ruleSummary,
+    annotations: ruleBase.annotations,
+    violations: ruleBase.violations,
   };
   return result;
 }
@@ -44,8 +81,9 @@ async function openAiDocumentAnalysis(payload, fallback) {
   const prompt = [
     "You are PRUDENCE, an Indian construction compliance agent.",
     "Analyze the uploaded construction plan image visually and return strict JSON only.",
+    "Read all visible sheet titles, red callouts, dimensions, area-statement rows, parking notes, and title-block text. Include every visible violation; do not stop at the first few.",
     "Use this exact schema:",
-    "{\"documentName\": string, \"jurisdiction\": string, \"score\": number, \"coverage\": number, \"risk\": \"Low|Medium|High\", \"status\": string, \"summary\": string, \"extractedItems\": string[], \"plan\": {\"sheetType\": string, \"scale\": string, \"plotCoverage\": string, \"farFsi\": string, \"setbackBand\": string, \"parking\": string}, \"violations\": [{\"severity\": \"CRITICAL|MAJOR|MINOR\", \"title\": string, \"required\": string, \"found\": string, \"delta\": string, \"note\": string, \"clause\": string, \"evidence\": string, \"calculation\": string}]}",
+    "{\"documentName\": string, \"jurisdiction\": string, \"score\": number, \"coverage\": number, \"risk\": \"Low|Medium|High\", \"status\": string, \"summary\": string, \"extractedItems\": string[], \"plan\": {\"sheetType\": string, \"scale\": string, \"plotCoverage\": string, \"farFsi\": string, \"setbackBand\": string, \"parking\": string}, \"violations\": [{\"severity\": \"CRITICAL|MAJOR|MINOR\", \"title\": string, \"required\": string, \"found\": string, \"delta\": string, \"note\": string, \"clause\": string, \"evidence\": string, \"calculation\": string}], \"ruleResults\": [{\"pack\": string, \"title\": string, \"required\": string, \"current\": string, \"status\": \"Pass|Fail|Missing|Review\", \"evidence\": string, \"calculation\": string}]}",
     "If a dimension or value is not legible, say 'Not legible' instead of inventing it.",
     "Focus on setbacks, FAR/FSI, coverage, parking count, road width, fire access, stairs, corridors, refuge areas, and RERA disclosure gaps.",
     `File metadata: ${JSON.stringify({ filename: payload.filename, size: payload.size, mimeType, jurisdiction: payload.jurisdiction })}`,
@@ -61,7 +99,7 @@ async function openAiDocumentAnalysis(payload, fallback) {
       ],
     }],
     temperature: 0,
-    max_tokens: 1400,
+    max_tokens: 2600,
     response_format: { type: "json_object" },
   };
 

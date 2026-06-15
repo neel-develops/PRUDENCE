@@ -627,8 +627,8 @@
         transform: translate(-50%, -50%);
         flex-direction: column;
         align-items: center;
-        gap: 10px;
-        pointer-events: none;
+        gap: 0;
+        pointer-events: auto;
       }
 
       .viewer.has-file.show-annotations .annotation { display: flex !important; }
@@ -640,12 +640,15 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 28px;
-        height: 28px;
+        width: 34px;
+        height: 34px;
         border-radius: 999px;
         border: 3px solid #fff;
         background: #ef4444;
         color: #fff;
+        cursor: help;
+        font-family: inherit;
+        padding: 0;
         box-shadow:
           0 0 0 6px rgba(239,68,68,.24),
           0 0 24px rgba(239,68,68,.95),
@@ -654,9 +657,9 @@
       }
 
       .pulse-dot:before {
-        content: "!";
+        content: attr(data-label);
         color: #fff;
-        font-size: 15px;
+        font-size: 11px;
         font-weight: 900;
         line-height: 1;
       }
@@ -681,6 +684,11 @@
       }
 
       .callout {
+        position: absolute;
+        z-index: 8;
+        left: 50%;
+        top: calc(100% + 14px);
+        transform: translate(-50%, -4px);
         border: 1px solid rgba(248,113,113,.9);
         border-radius: 10px;
         background: rgba(20,4,4,.92);
@@ -695,6 +703,52 @@
           0 0 0 1px rgba(255,255,255,.16),
           0 0 28px rgba(239,68,68,.42),
           0 12px 32px rgba(0,0,0,.38);
+        opacity: 0;
+        pointer-events: none;
+        visibility: hidden;
+        transition: opacity .16s ease, transform .16s ease, visibility .16s ease;
+      }
+
+      .annotation:hover .callout,
+      .annotation:focus-within .callout {
+        opacity: 1;
+        transform: translate(-50%, 0);
+        visibility: visible;
+      }
+
+      .annotation[data-side="left"] .callout {
+        left: auto;
+        right: calc(100% + 14px);
+        top: 50%;
+        transform: translate(4px, -50%);
+      }
+
+      .annotation[data-side="left"]:hover .callout,
+      .annotation[data-side="left"]:focus-within .callout {
+        transform: translate(0, -50%);
+      }
+
+      .annotation[data-side="right"] .callout {
+        left: calc(100% + 14px);
+        right: auto;
+        top: 50%;
+        transform: translate(-4px, -50%);
+      }
+
+      .annotation[data-side="right"]:hover .callout,
+      .annotation[data-side="right"]:focus-within .callout {
+        transform: translate(0, -50%);
+      }
+
+      .annotation[data-side="top"] .callout {
+        top: auto;
+        bottom: calc(100% + 14px);
+        transform: translate(-50%, 4px);
+      }
+
+      .annotation[data-side="top"]:hover .callout,
+      .annotation[data-side="top"]:focus-within .callout {
+        transform: translate(-50%, 0);
       }
 
       .callout strong {
@@ -1482,8 +1536,9 @@
             var title = item.title || "Violation";
             var required = item.required ? "Required: " + item.required : "";
             var current = item.current ? "Provided: " + item.current : "";
-            return '<div class="annotation" style="left:' + x + '%; top:' + y + '%;">' +
-              '<span class="pulse-dot"></span>' +
+            var side = x > 76 ? "left" : x < 24 ? "right" : y > 72 ? "top" : "bottom";
+            return '<div class="annotation" data-side="' + side + '" style="left:' + x + '%; top:' + y + '%;">' +
+              '<button class="pulse-dot" type="button" data-label="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label + " " + title) + '"></button>' +
               '<div class="callout"><strong>' + escapeHtml(label) + ' ' + escapeHtml(title) + '</strong>' +
                 '<small>' + escapeHtml(required) + '</small>' +
                 '<small>' + escapeHtml(current) + '</small>' +
